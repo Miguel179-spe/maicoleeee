@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+    <title>Stream Player • TV</title>
+    <script>
+        (function() { 
+            const v = document.createElement('video'); 
+            if (!v.canPlayType('application/vnd.apple.mpegurl')) { 
+                const s = document.createElement('script'); 
+                s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1'; 
+                s.async = true; 
+                document.head.appendChild(s); 
+            } 
+        })();
+    </script>
+    <style>
+        :root { --bg: #0B0B0B; --text: #FFFFFF; --accent: #E50914; --focus: #FFFFFF; --radius: 8px; --gutter: clamp(20px, 4vw, 40px); }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
+        .navbar { display: flex; align-items: center; gap: 14px; padding: 14px var(--gutter); position: sticky; top: 0; z-index: 50; background: rgba(11, 11, 11, 0.9); backdrop-filter: blur(10px); }
+        .navbar a { color: #cfcfcf; text-decoration: none; font-weight: 600; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
+        .navbar a.active { color: #fff; background: rgba(229, 9, 20, 0.2); }
+        .navbar a:focus, a.movie-card:focus, .play-btn:focus { outline: 3px solid var(--focus); outline-offset: 2px; box-shadow: 0 0 20px rgba(255, 255, 255, 0.3); transform: scale(1.05); }
+        #heroBanner { position: relative; height: min(40vh, 400px); display: flex; align-items: center; padding: 0 var(--gutter); background-size: cover; background-position: center; }
+        #heroBanner::before { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(11, 11, 11, 0.9) 0%, rgba(11, 11, 11, 0.4) 45%, transparent 70%); }
+        .hero-content { position: relative; z-index: 2; max-width: min(600px, 60vw); }
+        .hero-title { font-size: clamp(2rem, 4vw, 3rem); line-height: 1.1; margin-bottom: 8px; font-weight: 800; }
+        .hero-description { color: #d0d0d0; font-size: clamp(0.9rem, 1.5vw, 1.1rem); line-height: 1.4; margin-bottom: 16px; }
+        .hero-buttons a { padding: 12px 20px; font-size: 16px; font-weight: 700; border: none; border-radius: 6px; cursor: pointer; text-decoration: none; }
+        .play-btn { background: #fff; color: #000; }
+        #main-content-wrapper { height: calc(100% - min(40vh, 400px) - 62px); overflow: hidden; position: relative; }
+        .content-section { height: 100%; overflow-y: auto; overflow-x: hidden; position: absolute; width: 100%; top: 0; left: 0; opacity: 1; transition: opacity 0.2s; }
+        .content-section.hidden { opacity: 0; pointer-events: none; }
+        .section-title { font-size: 22px; font-weight: 800; margin: 12px var(--gutter) 8px; }
+        .container-carrusel { display: flex; gap: 12px; overflow-x: auto; padding: 0 var(--gutter) 20px; scroll-behavior: smooth; }
+        .container-carrusel::-webkit-scrollbar { display: none; }
+        a.movie-card { display: block; width: 180px; flex: 0 0 180px; border-radius: var(--radius); overflow: hidden; cursor: pointer; transition: transform 0.2s ease; background: #181818; text-decoration: none; }
+        .movie-card img { width: 100%; height: 270px; object-fit: cover; display: block; background: #222; }
+        .movie-card .title { font-size: 14px; font-weight: 600; padding: 8px; color: #f0f0f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .progress-indicator { position: absolute; left: 0; bottom: 0; height: 4px; background: linear-gradient(90deg, var(--accent), #ff6b6b); width: 0%; }
+        .loading-state, .error-state { padding: 40px var(--gutter); text-align: center; color: #ccc; }
+        .loading-spinner { border: 4px solid #333; border-top: 4px solid var(--accent); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 16px; }
+        @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="navbar" role="navigation">
+        <a id="link-inicio" class="active" onclick="App.showSection('inicio')">Inicio</a>
+        <a id="link-historial" onclick="App.showSection('historial')">Seguir viendo</a>
+    </div>
+    <section id="heroBanner">
+        <div class="hero-content">
+            <h1 class="hero-title" id="heroTitle">Cargando…</h1>
+            <p class="hero-description" id="heroDescription">Buscando contenido…</p>
+            <div class="hero-buttons">
+                <!-- El botón de reproducir es un enlace -->
+                <a class="play-btn" id="heroPlayBtn" tabindex="0" href="#">▶ Reproducir</a>
+            </div>
+        </div>
+    </section>
+    <div id="main-content-wrapper">
+        <section id="section-inicio" class="content-section"></section>
+        <section id="section-historial" class="content-section hidden"></section>
+    </div>
+
+    <script>
+        const CONFIG = {
+            PLAYER_PAGE_URL: "player.html", // Asegúrate que player.html está en la raíz
+            PLAYLIST_URL: "https://raw.githubusercontent.com/Miguel179-spe/tvlion/refs/heads/peliculas/peliculas.html",
+            STORAGE_KEYS: {
+                HISTORY: "tv_history_v11",
+                PROGRESS: "tv_progress_v11",
+                CACHE: "tv_cache_v11"
+            }
+        };
+        const State = { movies: [], heroMovies: [], currentHero: 0, focusable: [], focusIndex: 0 };
+        const Storage = {
+            get: k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+            set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+            getHistory: () => Storage.get(CONFIG.STORAGE_KEYS.HISTORY) || []
+        };
+        const Parser = {
+            parseM3U(t) {
+                return t.split('#EXTINF').slice(1).map(e => {
+                    const p = e.split('\n');
+                    const m = p[0];
+                    const u = p.slice(1).find(l => l.trim() && !l.startsWith('#'))?.trim();
+                    if (!u) return null;
+                    return {
+                        title: (m.split(',').pop() || '').trim(),
+                        logo: (m.match(/tvg-logo="([^"]*)"/)?.[1] || '').trim(),
+                        group: (m.match(/group-title="([^"]*)"/)?.[1] || 'Otros').trim(),
+                        url: u
+                    };
+                }).filter(Boolean);
+            }
+        };
+
+        const Renderer = {
+            createMovieCard(movie) {
+                const card = document.createElement('a');
+                card.className = 'movie-card';
+                card.tabIndex = 0;
+                // Enlace al reproductor
+                const playerUrl = `${CONFIG.PLAYER_PAGE_URL}?stream=${encodeURIComponent(movie.url)}`;
+                card.href = playerUrl;
+                // Guardar en historial
+                card.addEventListener('click', (e) => {
+                    const history = Storage.getHistory().filter(x => x.url !== movie.url);
+                    Storage.set(CONFIG.STORAGE_KEYS.HISTORY, [movie, ...history].slice(0, 50));
+                });
+                const progress = Storage.get(CONFIG.STORAGE_KEYS.PROGRESS)?.[movie.url];
+                const pHTML = progress?.progress > 5 && progress.progress < 95 ? `<div class="progress-indicator" style="width:${progress.progress}%"></div>` : '';
+                card.innerHTML = `<img src="${movie.logo || ''}" alt="${movie.title}"><div class="title">${movie.title}</div>${pHTML}`;
+                return card;
+            },
+            renderCategories(byCategory) {
+                const f = document.createDocumentFragment();
+                for (const [cat, movs] of Object.entries(byCategory)) {
+                    const s = document.createElement('div');
+                    s.innerHTML = `<h2 class="section-title">${cat}</h2>`;
+                    const c = document.createElement('div');
+                    c.className = 'container-carrusel';
+                    c.setAttribute('data-category', cat);
+                    for (const mov of movs) c.appendChild(this.createMovieCard(mov));
+                    s.appendChild(c);
+                    f.appendChild(s);
+                }
+                document.getElementById('section-inicio').innerHTML = '';
+                document.getElementById('section-inicio').appendChild(f);
+            },
+            renderHistory() {
+                const h = Storage.getHistory();
+                const c = document.getElementById('section-historial');
+                if (!h || h.length === 0) {
+                    c.innerHTML = '<h2>Seguir viendo</h2><p style="padding:0 var(--gutter);">Nada en el historial.</p>';
+                    return;
+                }
+                const car = document.createElement('div');
+                car.className = 'container-carrusel';
+                for (const mov of h) car.appendChild(this.createMovieCard(mov));
+                c.innerHTML = '<h2>Seguir viendo</h2>';
+                c.appendChild(car);
+            }
+        };
+
+        const Hero = {
+            timer: null,
+            update() {
+                const movs = State.heroMovies;
+                if (!movs.length) return;
+                const mov = movs[State.currentHero % movs.length];
+                document.getElementById('heroBanner').style.backgroundImage = `url('${mov.logo}')`;
+                document.getElementById('heroTitle').textContent = mov.title;
+                document.getElementById('heroDescription').textContent = mov.description;
+                // Botón de play es un enlace
+                const playBtn = document.getElementById('heroPlayBtn');
+                playBtn.href = `${CONFIG.PLAYER_PAGE_URL}?stream=${encodeURIComponent(mov.url)}`;
+                playBtn.onclick = () => {
+                    const history = Storage.getHistory().filter(x => x.url !== mov.url);
+                    Storage.set(CONFIG.STORAGE_KEYS.HISTORY, [mov, ...history].slice(0, 50));
+                };
+                State.currentHero = (State.currentHero + 1) % movs.length;
+            },
+            start() { this.stop(); this.update(); this.timer = setInterval(this.update, 8000); },
+            stop() { clearInterval(this.timer); }
+        };
+
+        const Navigation = {
+            updateFocusable() {
+                const active = document.querySelector('.content-section:not(.hidden)');
+                if (!active) { State.focusable = []; return; }
+                State.focusable = [
+                    ...document.querySelectorAll('.navbar a'),
+                    ...(active.id === 'section-inicio' ? [document.getElementById('heroPlayBtn')] : []),
+                    ...active.querySelectorAll('a.movie-card')
+                ];
+            },
+            setFocus(index) {
+                State.focusIndex = index;
+                const el = State.focusable[State.focusIndex];
+                if (el) el.focus();
+            },
+            activateFocused() { State.focusable[State.focusIndex]?.click(); },
+            moveFocus(direction) {
+                if (!State.focusable.length) return;
+                const current = State.focusable[State.focusIndex];
+                if (!current) return;
+                const rect = current.getBoundingClientRect();
+                let bestCandidate = -1, minDistance = Infinity;
+                State.focusable.forEach((target, i) => {
+                    if (i === State.focusIndex) return;
+                    const targetRect = target.getBoundingClientRect();
+                    const dx = targetRect.left + targetRect.width / 2 - (rect.left + rect.width / 2);
+                    const dy = targetRect.top + targetRect.height / 2 - (rect.top + rect.height / 2);
+                    let isValid = false, distance = Infinity;
+                    if (direction === 'Right' && dx > 5 && Math.abs(dy) < rect.height * 1.5) { isValid = true; distance = Math.sqrt(dx*dx + dy*dy*0.5); }
+                    else if (direction === 'Left' && dx < -5 && Math.abs(dy) < rect.height * 1.5) { isValid = true; distance = Math.sqrt(dx*dx + dy*dy*0.5); }
+                    else if (direction === 'Down' && dy > 5) { isValid = true; distance = Math.sqrt(dx*dx*0.1 + dy*dy); }
+                    else if (direction === 'Up' && dy < -5) { isValid = true; distance = Math.sqrt(dx*dx*0.1 + dy*dy); }
+                    if (isValid && distance < minDistance) { minDistance = distance; bestCandidate = i; }
+                });
+                if (bestCandidate !== -1) {
+                    State.focusIndex = bestCandidate;
+                    const el = State.focusable[State.focusIndex];
+                    if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }); }
+                }
+            }
+        };
+
+        const App = {
+            init() {
+                document.addEventListener('keydown', e => {
+                    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) { e.preventDefault(); Navigation.moveFocus(e.key.replace('Arrow', '')); }
+                    else if (e.key === 'Enter') { e.preventDefault(); Navigation.activateFocused(); }
+                    else if (e.key === 'Backspace') { e.preventDefault(); if (document.getElementById('section-historial').classList.contains('hidden')) return; this.showSection('inicio'); }
+                });
+                window.addEventListener('pageshow', (event) => { if (event.persisted) { this.showSection(document.getElementById('section-historial').classList.contains('hidden') ? 'inicio' : 'historial'); } });
+                this.loadMovies();
+            },
+            showSection(id) {
+                const isInicio = id === 'inicio';
+                document.getElementById('section-inicio').classList.toggle('hidden', !isInicio);
+                document.getElementById('section-historial').classList.toggle('hidden', isInicio);
+                document.getElementById('link-inicio').classList.toggle('active', isInicio);
+                document.getElementById('link-historial').classList.toggle('active', !isInicio);
+                if (isInicio) Hero.start();
+                else { Renderer.renderHistory(); Hero.stop(); }
+                Navigation.updateFocusable();
+                Navigation.setFocus(0);
+            },
+            async loadMovies() {
+                document.getElementById('section-inicio').innerHTML = `<div class="loading-state"><div class="loading-spinner"></div></div>`;
+                const cached = Storage.get(CONFIG.STORAGE_KEYS.CACHE);
+                if (cached?.data && (Date.now() - cached.timestamp < 3600000)) return this.processMovies(cached.data);
+                try {
+                    const response = await fetch(CONFIG.PLAYLIST_URL);
+                    if (!response.ok) throw new Error(`Red ${response.status}`);
+                    const text = await response.text();
+                    const movies = Parser.parseM3U(text);
+                    if (!movies.length) throw new Error('Lista vacía');
+                    Storage.set(CONFIG.STORAGE_KEYS.CACHE, { data: movies, timestamp: Date.now() });
+                    this.processMovies(movies);
+                } catch (error) {
+                    document.getElementById('section-inicio').innerHTML = `<div class="error-state">❌ Error al cargar</div>`;
+                }
+            },
+            processMovies(movies) {
+                State.movies = movies;
+                State.heroMovies = movies.slice(0, 5);
+                const byCategory = movies.reduce((acc, movie) => {
+                    (acc[movie.group] = acc[movie.group] || []).push(movie);
+                    return acc;
+                }, {});
+                Renderer.renderCategories(byCategory);
+                this.showSection('inicio');
+            }
+        };
+        document.addEventListener('DOMContentLoaded', () => App.init());
+    </script>
+</body>
+</html>
