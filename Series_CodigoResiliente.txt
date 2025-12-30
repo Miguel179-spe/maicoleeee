@@ -13,8 +13,8 @@ const PORT = process.env.PORT || 3000;
 // ===== CONFIGURACIÓN =====
 const config = { 
     DATA_FILES: [
-        process.env.DATA_FILE_2 || 'data_backup1.json',
         process.env.DATA_FILE || 'data.json',
+        process.env.DATA_FILE_2 || 'data_backup1.json',
         process.env.DATA_FILE_3 || 'data_backup2.json',
         process.env.DATA_FILE_4 || 'data_backup3.json'
     ],
@@ -1237,3 +1237,4 @@ app.listen(PORT,'0.0.0.0',()=>{
     log('INFO',`${SERIES_LIST.length} series | ${Object.keys(DATA_SOURCES).length} fuentes`);
 
 });
+
